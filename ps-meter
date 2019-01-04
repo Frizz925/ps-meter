@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+from abc import ABC
+from typing import List
+
+import csv
+import psutil
+import sched
+import signal
+import sys
+
+
+class SignalInterrupt(Exception):
+    def __init__(self, sig):
+        Exception.__init__(self, 'Received signal %s' % sig)
+
+
+class Field(ABC):
+    pass
+
+
+class SingleField(Field):
+    def __init__(self, name: str, value=None):
+        self.name = name
+        self._value = value
+
+    @property
+    def value(self) -> str:
+        value = self._value
+        return value() if callable(value) else value
+
+
+class MultipleField(Field):
+    def __init__(self, names, values={}):
+        self.names = names
+        self._values = values
+
+    @property
+    def values(self) -> List[str]:
+        values = self._values
+        return values() if callable(values) else values
+
+
+class DiskField(MultipleField):
+    def __init__(self):
+        MultipleField.__init__(
+            self,
+            ['disk_read', 'disk_write'],
+            self.get_disk_values
+        )
+
+    def get_disk_values(self):
+        counter = psutil.disk_io_counters(perdisk=False)
+        return [counter.read_bytes, counter.write_bytes]
+
+
+class NetworkField(MultipleField):
+    def __init__(self):
+        MultipleField.__init__(
+            self,
+            ['net_recv', 'net_sent'],
+            self.get_net_values
+        )
+
+    def get_net_values(self):
+        counter = psutil.net_io_counters(pernic=False)
+        return [counter.bytes_recv, counter.bytes_sent]
+
+
+def signal_handler(sig, frame):
+    raise SignalInterrupt(sig)
+
+
+def write_loop(writer: csv.DictWriter, fields: List[Field]):
+    scheduler = sched.scheduler()
+
+    def write_task():
+        row = {}
+        for field in fields:
+            if isinstance(field, MultipleField):
+                names = field.names
+                values = field.values
+                for idx, name in enumerate(names):
+                    value = values[idx]
+                    row[name] = value
+            elif isinstance(field, SingleField):
+                row[field.name] = field.value
+        writer.writerow(row)
+        scheduler.enter(1, 0, write_task)
+
+    writer.writeheader()
+    # Loops forever until receives KeyboardInterrupt or SignalInterrupt
+    scheduler.enter(1, 0, write_task)
+    scheduler.run()
+
+
+def get_field_names(fields: List[Field]) -> List[str]:
+    field_names = []
+    for field in fields:
+        if isinstance(field, MultipleField):
+            field_names.extend(field.names)
+        elif isinstance(field, SingleField):
+            field_names.append(field.name)
+    return field_names
+
+
+def main():
+    fields = [
+        SingleField('cpu', psutil.cpu_percent),
+        SingleField('mem', lambda: psutil.virtual_memory().percent),
+        DiskField(),
+        NetworkField(),
+    ]
+    field_names = get_field_names(fields)
+    writer = csv.DictWriter(sys.stdout, field_names)
+    try:
+        write_loop(writer, fields)
+    except (KeyboardInterrupt, SignalInterrupt):
+        # Ignore Ctrl+C
+        pass
+
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGKILL | signal.SIGINT, signal_handler)
+    main()
