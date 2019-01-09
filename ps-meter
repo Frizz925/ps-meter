@@ -121,6 +121,7 @@ def main():
         SingleField('time', lambda: round(time())),
         SingleField('cpu', psutil.cpu_percent),
         SingleField('mem', lambda: psutil.virtual_memory().percent),
+        SingleField('swap', lambda: psutil.swap_memory().percent),
         DiskField(),
         NetworkField(),
     ]
