@@ -72,7 +72,16 @@ def signal_handler(sig, frame):
     raise SignalInterrupt(sig)
 
 
-def write_loop(output: TextIOWrapper, writer: csv.DictWriter, fields: List[Field]):
+def init_fields(fields: List[Field]):
+    for field in fields:
+        if isinstance(field, SingleField):
+            field.value
+        elif isinstance(field, MultipleField):
+            field.values
+
+
+def write_loop(output: TextIOWrapper,
+               writer: csv.DictWriter, fields: List[Field]):
     scheduler = sched.scheduler()
 
     def write_task():
@@ -115,6 +124,7 @@ def main():
         DiskField(),
         NetworkField(),
     ]
+    init_fields(fields)
     field_names = get_field_names(fields)
     output = sys.stdout
     writer = csv.DictWriter(output, field_names)
